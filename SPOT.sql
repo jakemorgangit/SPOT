@@ -527,62 +527,86 @@ BEGIN
     DECLARE @CutoffUtc DATETIME2(3) = DATEADD(DAY, -@RetainDays, SYSUTCDATETIME());
 
     ----------------------------------------------------------------
-    -- 2. Identify old SnapshotIds first (drives all child rows)
+    -- 2. Put old SnapshotIds in a temp table so we can reuse it
     ----------------------------------------------------------------
-    ;WITH OldSnaps AS
+    IF OBJECT_ID('tempdb..#OldSnaps') IS NOT NULL
+        DROP TABLE #OldSnaps;
+
+    CREATE TABLE #OldSnaps
     (
-        SELECT SnapshotId
-        FROM SPOT.Snapshots
-        WHERE StartedAtUtc < @CutoffUtc
-    )
+        SnapshotId DATETIME2(3) NOT NULL PRIMARY KEY
+    );
+
+    INSERT INTO #OldSnaps (SnapshotId)
+    SELECT SnapshotId
+    FROM SPOT.Snapshots
+    WHERE StartedAtUtc < @CutoffUtc;
+
     ----------------------------------------------------------------
-    -- 3. Purge children in FK-safe order
+    -- 3. Nothing to purge? Exit early.
+    ----------------------------------------------------------------
+    IF NOT EXISTS (SELECT 1 FROM #OldSnaps)
+    BEGIN
+        SELECT
+            Message = 'No snapshots older than cutoff. Nothing purged.',
+            CutoffUtc = @CutoffUtc,
+            RemainingSnapshots = COUNT(*) ,
+            OldestSnapshotUtc  = MIN(StartedAtUtc),
+            NewestSnapshotUtc  = MAX(StartedAtUtc)
+        FROM SPOT.Snapshots;
+        RETURN;
+    END
+
+    ----------------------------------------------------------------
+    -- 4. Purge children in FK-safe order
     ----------------------------------------------------------------
     -- WhoIsActive
     DELETE WIA
     FROM SPOT.WhoIsActive AS WIA
-    INNER JOIN OldSnaps OS ON WIA.SnapshotId = OS.SnapshotId;
+    INNER JOIN #OldSnaps OS ON WIA.SnapshotId = OS.SnapshotId;
 
     -- HealthChecks
     DELETE HC
     FROM SPOT.HealthChecks AS HC
-    INNER JOIN OldSnaps OS ON HC.SnapshotId = OS.SnapshotId;
+    INNER JOIN #OldSnaps OS ON HC.SnapshotId = OS.SnapshotId;
 
     -- AGHealth
     DELETE AG
     FROM SPOT.AGHealth AS AG
-    INNER JOIN OldSnaps OS ON AG.SnapshotId = OS.SnapshotId;
+    INNER JOIN #OldSnaps OS ON AG.SnapshotId = OS.SnapshotId;
 
     -- WaitStats
     DELETE WS
     FROM SPOT.WaitStats AS WS
-    INNER JOIN OldSnaps OS ON WS.SnapshotId = OS.SnapshotId;
+    INNER JOIN #OldSnaps OS ON WS.SnapshotId = OS.SnapshotId;
 
     -- Blocking
     DELETE BL
     FROM SPOT.Blocking AS BL
-    INNER JOIN OldSnaps OS ON BL.SnapshotId = OS.SnapshotId;
+    INNER JOIN #OldSnaps OS ON BL.SnapshotId = OS.SnapshotId;
 
     -- Samples (depends on Snapshots)
     DELETE S
     FROM SPOT.Samples AS S
-    INNER JOIN OldSnaps OS ON S.SnapshotId = OS.SnapshotId;
+    INNER JOIN #OldSnaps OS ON S.SnapshotId = OS.SnapshotId;
 
     ----------------------------------------------------------------
-    -- 4. Finally purge Snapshots themselves
+    -- 5. Finally purge Snapshots themselves
     ----------------------------------------------------------------
     DELETE SN
     FROM SPOT.Snapshots AS SN
-    INNER JOIN OldSnaps OS ON SN.SnapshotId = OS.SnapshotId;
+    INNER JOIN #OldSnaps OS ON SN.SnapshotId = OS.SnapshotId;
 
     ----------------------------------------------------------------
-    -- 5. Return info about what is now left (optional summary)
+    -- 6. Return info about what is now left
     ----------------------------------------------------------------
     SELECT
+        Message = 'Purge complete.',
+        CutoffUtc = @CutoffUtc,
         RemainingSnapshots = COUNT(*) ,
         OldestSnapshotUtc  = MIN(StartedAtUtc),
         NewestSnapshotUtc  = MAX(StartedAtUtc)
     FROM SPOT.Snapshots;
-
 END
 GO
+
