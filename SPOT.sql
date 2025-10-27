@@ -497,3 +497,92 @@ BEGIN
     WHERE s.SnapshotId = @SnapshotId;
 END
 GO
+-- Adding purge routine
+IF OBJECT_ID('SPOT.PurgeOldData', 'P') IS NOT NULL
+    DROP PROCEDURE SPOT.PurgeOldData;
+GO
+
+CREATE PROCEDURE SPOT.PurgeOldData
+(
+      @RetainDays INT  -- keep this many days of history, purge anything older
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    ----------------------------------------------------------------
+    -- 1. Validate / normalise input
+    ----------------------------------------------------------------
+    IF @RetainDays IS NULL OR @RetainDays < 0
+    BEGIN
+        RAISERROR('RetainDays must be 0 or greater.', 16, 1);
+        RETURN;
+    END
+
+    /*
+        Define cutoff point.
+        Anything with StartedAtUtc < @CutoffUtc will be purged.
+        Example: @RetainDays = 7 means keep last 7 days, purge older than 7 days.
+    */
+    DECLARE @CutoffUtc DATETIME2(3) = DATEADD(DAY, -@RetainDays, SYSUTCDATETIME());
+
+    ----------------------------------------------------------------
+    -- 2. Identify old SnapshotIds first (drives all child rows)
+    ----------------------------------------------------------------
+    ;WITH OldSnaps AS
+    (
+        SELECT SnapshotId
+        FROM SPOT.Snapshots
+        WHERE StartedAtUtc < @CutoffUtc
+    )
+    ----------------------------------------------------------------
+    -- 3. Purge children in FK-safe order
+    ----------------------------------------------------------------
+    -- WhoIsActive
+    DELETE WIA
+    FROM SPOT.WhoIsActive AS WIA
+    INNER JOIN OldSnaps OS ON WIA.SnapshotId = OS.SnapshotId;
+
+    -- HealthChecks
+    DELETE HC
+    FROM SPOT.HealthChecks AS HC
+    INNER JOIN OldSnaps OS ON HC.SnapshotId = OS.SnapshotId;
+
+    -- AGHealth
+    DELETE AG
+    FROM SPOT.AGHealth AS AG
+    INNER JOIN OldSnaps OS ON AG.SnapshotId = OS.SnapshotId;
+
+    -- WaitStats
+    DELETE WS
+    FROM SPOT.WaitStats AS WS
+    INNER JOIN OldSnaps OS ON WS.SnapshotId = OS.SnapshotId;
+
+    -- Blocking
+    DELETE BL
+    FROM SPOT.Blocking AS BL
+    INNER JOIN OldSnaps OS ON BL.SnapshotId = OS.SnapshotId;
+
+    -- Samples (depends on Snapshots)
+    DELETE S
+    FROM SPOT.Samples AS S
+    INNER JOIN OldSnaps OS ON S.SnapshotId = OS.SnapshotId;
+
+    ----------------------------------------------------------------
+    -- 4. Finally purge Snapshots themselves
+    ----------------------------------------------------------------
+    DELETE SN
+    FROM SPOT.Snapshots AS SN
+    INNER JOIN OldSnaps OS ON SN.SnapshotId = OS.SnapshotId;
+
+    ----------------------------------------------------------------
+    -- 5. Return info about what is now left (optional summary)
+    ----------------------------------------------------------------
+    SELECT
+        RemainingSnapshots = COUNT(*) ,
+        OldestSnapshotUtc  = MIN(StartedAtUtc),
+        NewestSnapshotUtc  = MAX(StartedAtUtc)
+    FROM SPOT.Snapshots;
+
+END
+GO
