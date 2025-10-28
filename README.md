@@ -1,5 +1,9 @@
 # 🐾 SQL Performance Observation Tool (SPOT)
 
+
+![SPOT Demo](https://github.com/jakemorgangit/SPOT/blob/main/SPOTdemo.gif)
+
+
 **Version:** v0.9.0-preview  
 **Author:** Jake Morgan / Blackcat Data Solutions
 
