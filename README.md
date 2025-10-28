@@ -79,6 +79,9 @@ The PowerShell GUI (`SPOT.ps1`) provides a dark-themed, tabbed interface with pe
    - Use the **Test** button to verify connectivity (_connection tests are initiated automatically when sessions are loaded_)
    - Status turns **green** when successful.
 
+   <img width="311" height="278" alt="image" src="https://github.com/user-attachments/assets/6fa814eb-8c2b-46f8-a35a-25e509a170d0" />
+
+
 4. **Set capture parameters**
    - Adjust **Sample Interval (seconds)** and **Number of Samples** using the sliders.
    - Typical: 5–10 seconds interval × 5 samples.
